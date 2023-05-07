@@ -1,0 +1,335 @@
+#!/usr/bin/env bash
+#
+# Copyright © 2023 Revolution Robotics, Inc.
+#
+# @(#) pgadmin-installer
+#
+# This script installs a local pgAdmin4 server together with GNU/Linux
+# desktop suport. During installation, the user is prompted for
+# credentials to encrypt saved passwords and the pgAdmin4 (SQLite)
+# database is updated accordingly.
+#
+# The files installed for GNU/Linux desktop support include:
+#
+#     • pgAdmin4 config_local.py (setting: DATA_DIR=~/.pgadmin),
+#     • systemd unit file ${HOME}/.config/systemd/user/pgadmin.service,
+#     • XDG desktop entry ${HOME}/.local/share/applications/pgadmin.desktop, and
+#     • command-line script ${HOME}/bin/pgadmin-ctl.
+#
+# The pgadmin-ctl utility is called by pgadmin.desktop to start the
+# pgAdmin4 service and open in the web browser the pgAdmin4 URL (by
+# default, http://localhost:5050). To stop the pgAdmin4 service, run:
+#
+#    $ pgadmin-ctl stop
+#
+# To remove the pgAdmin4 service and associated files, run:
+#
+#     $ ./pgadmin-installer uninstall
+#
+: ${AWK_CMD:='@AWK_CMD@'}
+: ${CAT_CMD:='@CAT_CMD@'}
+: ${CHMOD_CMD:='@CHMOD_CMD@'}
+: ${GREP_CMD:='@GREP_CMD@'}
+: ${INSTALL_CMD:='@INSTALL_CMD@'}
+: ${KILL_CMD:='@KILL_CMD@'}
+: ${PIP_CMD:='@PIP_CMD@'}
+: ${PYTHON_CMD:='@PYTHON_CMD@'}
+: ${READLINK_CMD:='@READLINK_CMD@'}
+: ${SED_CMD:='@SED_CMD@'}
+: ${STAT_CMD:='@STAT_CMD@'}
+: ${SLEEP_CMD:='@SLEEP_CMD@'}
+: ${SYSTEMCTL_CMD:='@SYSTEMCTL_CMD@'}
+
+: ${ASDF_SHIMS_PATH:='@ASDF_SHIMS_PATH@'}
+: ${PYTHON_SITE_PACKAGES:='@PYTHON_SITE_PACKAGES@'}
+
+resolve-existing ()
+{
+    if $READLINK_CMD --version 2>&1 | $GREP_CMD -q 'GNU'; then
+        $READLINK_CMD -e "$@"
+    else
+        $READLINK_CMD -f N "$@"
+    fi
+}
+
+get-file-size ()
+{
+    if $STAT_CMD --version 2>&1 | $GREP_CMD -q 'GNU'; then
+        $STAT_CMD -c '%s' "$@"
+    else
+        $STAT_CMD -f '%z' "$@"
+    fi
+}
+
+maybe-reshim-python ()
+{
+    local pip_dir=$1
+
+    if test ."$pip_dir" = ."$ASDF_SHIMS_PATH"; then
+        echo "${script_name}: reshimming python" >&2
+        source "${ASDF_SHIMS_PATH}/../asdf.sh"
+        asdf reshim python
+    fi
+}
+
+get-data-dir ()
+{
+    local pg_data_dir=''
+
+    pg_data_dir=$(
+        $AWK_CMD -F\' '/^[[:space:]]*DATA_DIR/ { print  $2 }' \
+                 "${PYTHON_SITE_PACKAGES}/pgadmin4/config_local.py"
+               ) || return $?
+    eval echo "$pg_data_dir"
+}
+
+deploy-packages ()
+{
+    local -n pkgs=$1
+
+    $PIP_CMD install --upgrade --no-input "${pkgs[@]}"
+    maybe-reshim-python ${PIP_CMD%/*}
+}
+
+remove-packages ()
+{
+    local -n pkgs=$1
+
+    $PIP_CMD uninstall --yes "${pkgs[@]}"
+    maybe-reshim-python ${PIP_CMD%/*}
+}
+
+deploy-resources ()
+{
+    local -n resources=$1
+    local pgadmin_path=$2
+
+    local file=''
+    local directory=''
+    local perms=''
+
+    printf "%s\n" "${resources[@]}" |
+        while read file directory; do
+            $INSTALL_CMD -d -m 0700 "$directory"
+            $SED_CMD -e "s;@PGADMIN4_CMD@;${pgadmin_path};" \
+                     "$file" >"${directory}/${file##*/}"
+            if [[ ."$directory" =~ ^\..*/bin/?$ ]]; then
+                perms=u+rwx,go-rwx
+            else
+                perms=u+rw,a-x,go-rw
+            fi
+
+            $CHMOD_CMD "$perms" "${directory}/${file##*/}"
+        done || return $?
+
+    $SYSTEMCTL_CMD --user daemon-reload
+}
+
+remove-resources ()
+{
+    local -n resources=$1
+
+    local file=''
+    local directory=''
+
+    printf "%s\n" "${resources[@]}" |
+        while read file directory; do
+            $RM_CMD -f "${directory}/${file##*/}"
+        done || return $?
+
+    $SYSTEMCTL_CMD --user daemon-reload
+}
+
+get-and-export-credentials ()
+{
+    local email_address=''
+    local password=''
+    local password_conformation=''
+    local normalize_email=${script_dir}/resources/normalize-email
+
+    printf 'NOTE: Configuring authentication for SERVER mode.\n\n'
+    printf 'Enter the email address and password to use for the initial pgAdmin user account:\n\n'
+    read -p 'Email address: ' email_address
+
+    while ! email_address=$($normalize_email "$email_address"); do
+        printf 'Invalid email address. Please try again.\n'
+        read -p 'Email address: ' email_address
+    done
+
+    read -s -p 'Password:' password
+    read -s -p $'\nRetype password:' password_confirmation
+
+    while test ."$password" != ."$password_confirmation"; do
+        printf '\nPasswords do not match. Please try again.\n'
+        read -s -p 'Password:' password
+        read -s -p $'\nRetype password:' password_confirmation
+    done
+
+    export PGADMIN_SETUP_EMAIL=$email_address \
+           PGADMIN_SETUP_PASSWORD=$password
+}
+
+settle-pg-database ()
+{
+    local pg_data_dir=$1
+
+    local pg_database=${pg_data_dir}/pgadmin4.db
+    local pid=''
+
+    printf '\nUpdating pgAdmin4 database, please wait...'
+
+    pgadmin4 &>/dev/null &
+    pid=$!
+
+    trap '$KILL_CMD -9 "$pid"; $RM_CMD -rf "$pg_data_dir"; exit 1' 0 1 2 15 RETURN
+
+    while test ! -f "$pg_database"; do
+        $SLEEP_CMD 1
+    done
+
+    local -i current_size=0
+    local -i previous_size=0
+    local -i update_seconds=5
+
+    current_size=$(get-file-size "$pg_database") || return $?
+    while (( current_size != previous_size )); do
+        (( previous_size = current_size ))
+        $SLEEP_CMD "$update_seconds"
+        current_size=$(get-file-size "$pg_database") || return $?
+    done
+
+    trap - 0 1 2 15 RETURN
+
+    $SLEEP_CMD "$update_seconds"
+    $KILL_CMD -1 "$pid"
+    printf '\n'
+    $SLEEP_CMD $(( 2 * update_seconds ))
+}
+
+initialize-service ()
+{
+    local pg_data_dir=''
+
+    pg_data_dir=$(get-data-dir) || return $?
+
+    if test ! -d "$pg_data_dir"; then
+        get-and-export-credentials || return $?
+        settle-pg-database "$pg_data_dir" || return $?
+    fi
+ }
+
+stop-service ()
+{
+    local service=$1
+
+    if $SYSTEMCTL_CMD --user is-active "$service" >/dev/null; then
+        $SYSTEMCTL_CMD --user stop "$service"
+    fi
+}
+
+enable-service ()
+{
+    local service=$1
+
+    if ! $SYSTEMCTL_CMD --user is-enabled "$service" >/dev/null; then
+        $SYSTEMCTL_CMD --user enable --now "$service"
+    fi
+}
+
+disable-service ()
+{
+    local service=$1
+
+    if $SYSTEMCTL_CMD --user is-enabled "$service" >/dev/null; then
+        $SYSTEMCTL_CMD --user disable --now "$service"
+    fi
+}
+
+complete-installation ()
+{
+    local path_update_needed=$1
+
+    if ! $path_update_needed; then
+        $CAT_CMD <<EOF
+╒════════════════════════════════════════════════════════════════════════╕
+│                                                                        │
+│              pgAdmin installation completed successfully!              │
+│                                                                        │
+│ In order to add pgAdmin to your Desktop apps, it may also be nece-     │
+│ ssary to log out and back in again.                                    │
+│                                                                        │
+╘════════════════════════════════════════════════════════════════════════╛
+EOF
+    else
+        $CAT_CMD <<EOF
+╒════════════════════════════════════════════════════════════════════════╕
+│                                                                        │
+│ In order to complete pgAdmin installation, please update the PATH      │
+│ environment variable in your shell's initialization scripts (e.g.,     │
+│ ~/.bashrc and ~/.bash_profile or ~/.zshrc and ~/.zprofile) with:       │
+│                                                                        │
+│     export PATH=${PATH}:~/.local/bin                                   │
+│                                                                        │
+│ In order to add pgAdmin to your Desktop apps, it may also be nece-     │
+│ ssary to log out and back in again.                                    │
+│                                                                        │
+╘════════════════════════════════════════════════════════════════════════╛
+EOF
+    fi
+}
+
+if test ."$0" = ."${BASH_SOURCE[0]}"; then
+    set -o pipefail
+
+    declare script=$(resolve-existing "$0")
+    declare script_name=${script##*/}
+    declare script_dir=${script%/*}
+
+    declare resources_dir=${script_dir}/resources
+    declare -a pgadmin_resources=(
+        "${resources_dir}/config_local.py ${PYTHON_SITE_PACKAGES}/pgadmin4"
+        "${resources_dir}/pgadmin.desktop ${HOME}/.local/share/applications"
+        "${resources_dir}/pgadmin.service ${HOME}/.config/systemd/user"
+        "${resources_dir}/pgadmin-ctl ${HOME}/bin"
+    )
+
+    declare service=pgadmin.service
+    declare -a wheels=( pgadmin4 simple-websocket )
+    declare pgadmin_path=''
+
+    case "$1" in
+        i*)
+            stop-service "$service" || exit $?
+            deploy-packages wheels || exit $?
+
+            declare path_update_needed=false
+
+            while ! pgadmin_path=$(command -v pgadmin4); do
+                if test -x ~/.local/bin/pgadmin4; then
+                    path_update_needed=true
+                    export PATH=${PATH}:~/.local/bin
+                else
+                    echo "${script_name}: pgadmin4: No such file or directory" >&2
+                    exit 1
+                fi
+            done
+
+            deploy-resources pgadmin_resources "$pgadmin_path" || exit $?
+            initialize-service || exit $?
+            enable-service "$service" || exit $?
+            complete-installation $path_update_needed
+            ;;
+        u*)
+            disable-service "$service" || exit $?
+            remove-resources pgadmin_resources || exit $?
+            remove-packages wheels || exit $?
+            ;;
+        r*)
+            initialize-service
+            enable-service "$service" || exit $?
+            ;;
+        *)
+            echo "Usage: ${script_name} install|uninstall|reinitialize" >&2
+            ;;
+    esac
+fi

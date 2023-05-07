@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+#
+# Copyright © 2023 Revolution Robotics, Inc.
+#
+# @(#) pgadmin-ctl
+#
+: ${AWK_CMD:='@AWK_CMD@'}
+: ${CAT_CMD:='@CAT_CMD@'}
+: ${GREP_CMD:='@GREP_CMD@'}
+: ${OPEN_CMD:='@OPEN_CMD@'}
+: ${READLINK_CMD:='@READLINK_CMD@'}
+: ${SLEEP_CMD:='@SLEEP_CMD@'}
+: ${SYSTEMCTL_CMD:='@SYSTEMCTL_CMD@'}
+: ${TAIL_CMD:='@TAIL_CMD@'}
+
+: ${PYTHON_SITE_PACKAGES:='@PYTHON_SITE_PACKAGES@'}
+
+resolve-existing ()
+{
+    if $READLINK_CMD --version 2>&1 | $GREP_CMD -q 'coreutils'; then
+        $READLINK_CMD -e "$@"
+    else
+        $READLINK_CMD -f N "$@"
+    fi
+}
+
+get-server-ip ()
+{
+    local -a config_list=()
+
+    for suffix in '' _distro _local; do
+        if test -f "${PYTHON_SITE_PACKAGES}/pgadmin4/config${suffix}.py"; then
+            config_list+=( "${PYTHON_SITE_PACKAGES}/pgadmin4/config${suffix}.py" )
+        fi
+    done
+    $CAT_CMD "${config_list[@]}" |
+        $AWK_CMD '/^[[:space:]]*DEFAULT_SERVER[^_]/ { gsub(/['\''"]/, "", $3); print  $3 }' |
+        $TAIL_CMD -1
+}
+
+get-server-port ()
+{
+    local -a config_list=()
+
+    for suffix in '' _distro _local; do
+        if test -f "${PYTHON_SITE_PACKAGES}/pgadmin4/config${suffix}.py"; then
+            config_list+=( "${PYTHON_SITE_PACKAGES}/pgadmin4/config${suffix}.py" )
+        fi
+    done
+
+    $CAT_CMD "${config_list[@]}" |
+        $AWK_CMD '/^[[:space:]]*DEFAULT_SERVER_PORT/ { gsub(/['\''"]/, "", $3); print  $3 }' |
+        $TAIL_CMD -1
+}
+
+service-start ()
+{
+    local service=$1
+    local url=$2
+
+    local startup_delay_seconds=6
+
+    if $SYSTEMCTL_CMD --user is-active "$service" >/dev/null; then
+        $OPEN_CMD "$url"
+    elif $SYSTEMCTL_CMD --user start "$service"; then
+        while true; do
+            $SLEEP_CMD $startup_delay_seconds
+            if $SYSTEMCTL_CMD --user is-active "$service" >/dev/null; then
+                break
+            fi
+        done
+        $OPEN_CMD "$url"
+    else
+        echo "${script_name}: ${service}: Service unable start" >&2
+        $SYSTEMCTL_CMD --user status "$service"
+        return 1
+    fi
+}
+
+service-stop ()
+{
+    local service=$1
+
+    if $SYSTEMCTL_CMD --user is-active "$service" >/dev/null; then
+        $SYSTEMCTL_CMD --user stop "$service"
+    fi
+}
+
+service-status ()
+{
+    local service=$1
+
+    $SYSTEMCTL_CMD --user status "$service"
+}
+
+if test ."$0" = ."${BASH_SOURCE[0]}"; then
+    set -o pipefail
+
+    declare script=$(resolve-existing "$0")
+    declare script_name=${script##*/}
+
+    declare service=pgadmin.service
+    declare server_ip=''
+    declare server_port=''
+
+
+    server_ip=$(get-server-ip) || exit $?
+    server_port=$(get-server-port) || exit $?
+
+    declare url=http://${server_ip}:${server_port}
+
+    case "$1" in
+        status)
+            service-status "$service" || exit $?
+            ;;
+        stop)
+            service-stop "$service" || exit $?
+            ;;
+        start)
+            service-start "$service" "$url" || exit $?
+            ;;
+        *)
+            echo "Usage: ${script_name} status|start|stop" >&2
+            ;;
+    esac
+fi
