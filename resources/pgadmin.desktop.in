@@ -2,7 +2,7 @@
 Encoding=UTF-8
 Name=pgAdmin 4
 Exec=@HOME_BIN@/pgadmin-ctl start
-Icon=@PYTHON_SITE_PACKAGES@/pgadmin4/pgadmin/static/img/logo-256.png
+Icon=@PGADMIN_PACKAGE_DIR@/pgadmin/static/img/logo-256.png
 Type=Application
 Categories=Application;Development;
 MimeType=text/html

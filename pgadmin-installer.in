@@ -5,9 +5,10 @@
 # @(#) pgadmin-installer
 #
 # This script installs a local pgAdmin4 server together with GNU/Linux
-# desktop suport. During installation, the user is prompted for
-# credentials to encrypt saved passwords and the pgAdmin4 (SQLite)
-# database is updated accordingly.
+# desktop suport in two stages: bootstrap and install. The bootstrap
+# stage identifies where Python installs packages. During install
+# stage, the user is prompted for credentials to encrypt saved
+# passwords and the pgAdmin4 (SQLite) database is updated accordingly.
 #
 # The files installed for GNU/Linux desktop support include:
 #
@@ -31,17 +32,18 @@
 : ${CHMOD_CMD:='@CHMOD_CMD@'}
 : ${GREP_CMD:='@GREP_CMD@'}
 : ${INSTALL_CMD:='@INSTALL_CMD@'}
+: ${JQ_CMD:='@JQ_CMD@'}
 : ${KILL_CMD:='@KILL_CMD@'}
 : ${PIP_CMD:='@PIP_CMD@'}
-: ${PYTHON_CMD:='@PYTHON_CMD@'}
 : ${READLINK_CMD:='@READLINK_CMD@'}
 : ${SED_CMD:='@SED_CMD@'}
 : ${STAT_CMD:='@STAT_CMD@'}
 : ${SLEEP_CMD:='@SLEEP_CMD@'}
 : ${SYSTEMCTL_CMD:='@SYSTEMCTL_CMD@'}
+: ${TAIL_CMD:='@TAIL_CMD@'}
+: ${UPDATE_DB_CMD:='@UPDATE_DB_CMD@'}
 
 : ${ASDF_SHIMS_PATH:='@ASDF_SHIMS_PATH@'}
-: ${PYTHON_SITE_PACKAGES:='@PYTHON_SITE_PACKAGES@'}
 
 resolve-existing ()
 {
@@ -74,18 +76,32 @@ maybe-reshim-python ()
 
 get-data-dir ()
 {
+    local pgadmin_package_dir=$1
+
+    local -a config_list=()
+
+    for suffix in '' _distro _local; do
+        if test -f "${pgadmin_package_dir}/config${suffix}.py"; then
+            config_list+=( "${pgadmin_package_dir}/config${suffix}.py" )
+        fi
+    done
+
     local pg_data_dir=''
 
     pg_data_dir=$(
-        $AWK_CMD -F\' '/^[[:space:]]*DATA_DIR/ { print  $2 }' \
-                 "${PYTHON_SITE_PACKAGES}/pgadmin4/config_local.py"
+        $CAT_CMD "${config_list[@]}" |
+            $AWK_CMD -F\' '/^[[:space:]]*DATA_DIR/ { print  $2 }' |
+            $TAIL_CMD -1
                ) || return $?
+
     eval echo "$pg_data_dir"
 }
 
 deploy-packages ()
 {
     local -n pkgs=$1
+
+    local pgadmin_path=''
 
     $PIP_CMD install --upgrade --no-input "${pkgs[@]}"
     maybe-reshim-python ${PIP_CMD%/*}
@@ -99,20 +115,60 @@ remove-packages ()
     maybe-reshim-python ${PIP_CMD%/*}
 }
 
+get-pgadmin-path ()
+{
+    local pgadmin_path=''
+
+    while ! pgadmin_path=$(command -v pgadmin4); do
+        if test -x "${HOME}/.local/bin/pgadmin4"; then
+           export PATH=${HOME}/.local/bin:${PATH}
+
+           # Upgrade pip and pyopenssl (see: https://stackoverflow.com/a/74443414).
+           $PIP_CMD install -U pip >&2
+           ${HOME}/.local/bin/pip install -U pip >&2
+           ${HOME}/.local/bin/pip install -U pyopenssl email-validator >&2
+        else
+            echo "${script_name}: pgadmin4: No such file or directory" >&2
+            return 1
+        fi
+    done
+
+    echo $pgadmin_path
+}
+
+get-pgadmin-package-dir ()
+{
+    pgadmin_metadata_dir=$(
+        $PIP_CMD  inspect  |
+            $JQ_CMD -r '.installed[] |
+                        select(.metadata.name == "pgadmin4") |
+                        .metadata_location'
+                         ) || return $?
+    echo "${pgadmin_metadata_dir%/*}/pgadmin4"
+}
+
 deploy-resources ()
 {
     local -n resources=$1
-    local pgadmin_path=$2
 
     local file=''
     local directory=''
     local perms=''
+    local pgadmin_path=''
+    local pgadmin_package_dir=''
+
+    pgadmin_path=$(get-pgadmin-path) || return $?
+    pgadmin_package_dir=$(get-pgadmin-package-dir) || return $?
 
     printf "%s\n" "${resources[@]}" |
         while read file directory; do
+            directory=${directory/@PGADMIN_PACKAGE_DIR@/$pgadmin_package_dir}
             $INSTALL_CMD -d -m 0700 "$directory"
             $SED_CMD -e "s;@PGADMIN4_CMD@;${pgadmin_path};" \
-                     "$file" >"${directory}/${file##*/}"
+                     -e "s;@PGADMIN_PACKAGE_DIR@;${pgadmin_package_dir};" \
+                     -e "s;@HOME_BIN@;${HOME}/bin;" \
+                     "$file" >"${directory}/${file##*/}" \
+                || return $?
             if [[ ."$directory" =~ ^\..*/bin/?$ ]]; then
                 perms=u+rwx,go-rwx
             else
@@ -123,6 +179,8 @@ deploy-resources ()
         done || return $?
 
     $SYSTEMCTL_CMD --user daemon-reload
+
+    echo "$pgadmin_package_dir"
 }
 
 remove-resources ()
@@ -156,7 +214,7 @@ get-and-export-credentials ()
         read -p 'Email address: ' email_address
     done
 
-    read -s -p 'Password:' password
+    read -s -p 'Password: ' password
     read -s -p $'\nRetype password:' password_confirmation
 
     while test ."$password" != ."$password_confirmation"; do
@@ -178,7 +236,7 @@ settle-pg-database ()
 
     printf '\nUpdating pgAdmin4 database, please wait...'
 
-    pgadmin4 &>/dev/null &
+    pgadmin4 &>"${script_dir}/pgadmin-first-run.log" &
     pid=$!
 
     trap '$KILL_CMD -9 "$pid"; $RM_CMD -rf "$pg_data_dir"; exit 1' 0 1 2 15 RETURN
@@ -208,13 +266,31 @@ settle-pg-database ()
 
 initialize-service ()
 {
+    local pgadmin_package_dir=$1
+
     local pg_data_dir=''
 
-    pg_data_dir=$(get-data-dir) || return $?
+    pg_data_dir=$(get-data-dir "$pgadmin_package_dir") || return $?
 
     if test ! -d "$pg_data_dir"; then
-        get-and-export-credentials || return $?
-        settle-pg-database "$pg_data_dir" || return $?
+        if command -v pgadmin4 >/dev/null; then
+            get-and-export-credentials || return $?
+            settle-pg-database "$pg_data_dir" || return $?
+        else
+            cat <<EOF
+╒════════════════════════════════════════════════════════════════════════╕
+│                                                                        │
+│ Update the PATH as indicated below, then run the command:              │
+│                                                                        │
+│     pgadmin4                                                           │
+│                                                                        │
+│ and enter youur credentials when prompted. Once the server has         │
+│ started, press <CTRL> + C to exit, and use the pgAdmin Desktop app     │
+│ thereafter.                                                            │
+│                                                                        │
+╘════════════════════════════════════════════════════════════════════════╛
+EOF
+        fi
     fi
  }
 
@@ -247,35 +323,32 @@ disable-service ()
 
 complete-installation ()
 {
-    local path_update_needed=$1
+    local header='╒════════════════════════════════════════════════════════════════════════╕
+│                                                                        │'
+    local success='│              pgAdmin installation completed successfully!              │'
+    local update_path="│ To complete the pgAdmin installation, please update the PATH           │
+│ variable in your shell's initialization scripts (e.g., ~/.bashrc       │
+│ and ~/.bash_profile or ~/.zshrc and ~/.zprofile) with:                 │
+│                                                                        │
+│     export PATH+=:~/.local/bin:~/bin                                   │"
+    local logout='│                                                                        │
+│ To make the Desktop aware of the new pgAdmin app, it might be          │
+│ necessary to log out and back in again.                                │'
+    local footer='│                                                                        │
+╘════════════════════════════════════════════════════════════════════════╛'
 
-    if ! $path_update_needed; then
-        $CAT_CMD <<EOF
-╒════════════════════════════════════════════════════════════════════════╕
-│                                                                        │
-│              pgAdmin installation completed successfully!              │
-│                                                                        │
-│ In order to add pgAdmin to your Desktop apps, it may also be nece-     │
-│ ssary to log out and back in again.                                    │
-│                                                                        │
-╘════════════════════════════════════════════════════════════════════════╛
-EOF
-    else
-        $CAT_CMD <<EOF
-╒════════════════════════════════════════════════════════════════════════╕
-│                                                                        │
-│ In order to complete pgAdmin installation, please update the PATH      │
-│ environment variable in your shell's initialization scripts (e.g.,     │
-│ ~/.bashrc and ~/.bash_profile or ~/.zshrc and ~/.zprofile) with:       │
-│                                                                        │
-│     export PATH=${PATH}:~/.local/bin                                   │
-│                                                                        │
-│ In order to add pgAdmin to your Desktop apps, it may also be nece-     │
-│ ssary to log out and back in again.                                    │
-│                                                                        │
-╘════════════════════════════════════════════════════════════════════════╛
-EOF
+    if test -x "$UPDATE_DB_CMD"; then
+        $UPDATE_DB_CMD "${HOME}/.local/share/applications/"
     fi
+
+    echo "$header"
+    if command -v pgadmin4 >/dev/null; then
+        echo "$success"
+    else
+        echo "$update_path"
+        echo "$logout"
+    fi
+    echo "$footer"
 }
 
 if test ."$0" = ."${BASH_SOURCE[0]}"; then
@@ -287,37 +360,24 @@ if test ."$0" = ."${BASH_SOURCE[0]}"; then
 
     declare resources_dir=${script_dir}/resources
     declare -a pgadmin_resources=(
-        "${resources_dir}/config_local.py ${PYTHON_SITE_PACKAGES}/pgadmin4"
+        "${resources_dir}/config_local.py @PGADMIN_PACKAGE_DIR@"
         "${resources_dir}/pgadmin.desktop ${HOME}/.local/share/applications"
         "${resources_dir}/pgadmin.service ${HOME}/.config/systemd/user"
         "${resources_dir}/pgadmin-ctl ${HOME}/bin"
     )
 
     declare service=pgadmin.service
-    declare -a wheels=( pgadmin4 simple-websocket )
-    declare pgadmin_path=''
+    declare -a wheels=( pgadmin4 simple-websocket email-validator )
+    declare pgadmin_package_dir=''
 
     case "$1" in
         i*)
             stop-service "$service" || exit $?
             deploy-packages wheels || exit $?
-
-            declare path_update_needed=false
-
-            while ! pgadmin_path=$(command -v pgadmin4); do
-                if test -x ~/.local/bin/pgadmin4; then
-                    path_update_needed=true
-                    export PATH=${PATH}:~/.local/bin
-                else
-                    echo "${script_name}: pgadmin4: No such file or directory" >&2
-                    exit 1
-                fi
-            done
-
-            deploy-resources pgadmin_resources "$pgadmin_path" || exit $?
-            initialize-service || exit $?
+            pgadmin_package_dir=$(deploy-resources pgadmin_resources) || exit $?
+            initialize-service "$pgadmin_package_dir" || exit $?
             enable-service "$service" || exit $?
-            complete-installation $path_update_needed
+            complete-installation || exit $?
             ;;
         u*)
             disable-service "$service" || exit $?
@@ -325,7 +385,8 @@ if test ."$0" = ."${BASH_SOURCE[0]}"; then
             remove-packages wheels || exit $?
             ;;
         r*)
-            initialize-service
+            pgadmin_package_dir=$(get-pgadmin-package-dir) || exit $?
+            initialize-service "$pgadmin_package_dir" || exit $?
             enable-service "$service" || exit $?
             ;;
         *)

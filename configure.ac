@@ -56,27 +56,32 @@ AC_SUBST([OPT_PATHS], ["$OPT_PATHS"])
 OPT_PREFIX=${OPT_PREFIX:+"${OPT_PREFIX}${PATH_SEPARATOR}"}
 
 # Checks for programs.
-AC_PATH_PROGS([AWK_CMD],      [gawk awk],           [], [${OPT_PREFIX}${PATH}])
-AC_PATH_PROGS([CAT_CMD],      [gcat cat],           [], [${OPT_PREFIX}${PATH}])
-AC_PATH_PROGS([CHMOD_CMD],    [gchmod chmod],       [], [${OPT_PREFIX}${PATH}])
-AC_PATH_PROGS([GREP_CMD],     [ggrep grep],         [], [${OPT_PREFIX}${PATH}])
-AC_PATH_PROGS([INSTALL_CMD],  [ginstall install],   [], [${OPT_PREFIX}${PATH}])
-AC_PATH_PROGS([KILL_CMD],     [gkill kill],         [], [${OPT_PREFIX}${PATH}])
-AC_PATH_PROGS([OPEN_CMD],     [xdg-open open],      [], [${ASDF_PREFIX}${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([AWK_CMD],      [gawk awk],                [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([CAT_CMD],      [gcat cat],                [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([CHMOD_CMD],    [gchmod chmod],            [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([GREP_CMD],     [ggrep grep],              [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([INSTALL_CMD],  [ginstall install],        [], [${OPT_PREFIX}${PATH}])
 
-AC_PATH_PROG([PIP_CMD],       [pip3],               [], [${ASDF_PREFIX}${OPT_PREFIX}${PATH}])
-AC_PATH_PROG([PYTHON_CMD],    [python3],            [], [${ASDF_PREFIX}${OPT_PREFIX}${PATH}])
+AC_PATH_PROG([JQ_CMD],        [jq],                      [], [${OPT_PREFIX}${PATH}])
 
-AC_PATH_PROGS([READLINK_CMD], [greadlink readlink], [], [${OPT_PREFIX}${PATH}])
-AC_PATH_PROGS([SED_CMD],      [gsed sed],           [], [${OPT_PREFIX}${PATH}])
-AC_PATH_PROGS([SLEEP_CMD],    [gsleep sleep],       [], [${OPT_PREFIX}${PATH}])
-AC_PATH_PROGS([STAT_CMD],     [gstat stat],         [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([KILL_CMD],     [gkill kill],              [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([OPEN_CMD],     [xdg-open open],           [], [${OPT_PREFIX}${ASDF_PREFIX}${PATH}])
+
+AC_PATH_PROG([PIP_CMD],       [pip3],                    [], [${OPT_PREFIX}${ASDF_PREFIX}${PATH}])
+AC_PATH_PROG([PYTHON_CMD],    [python3],                 [], [${OPT_PREFIX}${ASDF_PREFIX}${PATH}])
+
+AC_PATH_PROGS([READLINK_CMD], [greadlink readlink],      [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([SED_CMD],      [gsed sed],                [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([SLEEP_CMD],    [gsleep sleep],            [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([STAT_CMD],     [gstat stat],              [], [${OPT_PREFIX}${PATH}])
 
 AC_PATH_PROG([SYSTEMCTL_CMD], [systemctl])
 
-AC_PATH_PROGS([TAIL_CMD],     [gtail tail],         [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([TAIL_CMD],     [gtail tail],              [], [${OPT_PREFIX}${PATH}])
 
-for cmd in OPEN_CMD PIP_CMD SYSTEMCTL_CMD; do
+AC_PATH_PROG([UPDATE_DB_CMD], [update-desktop-database], [], [${OPT_PREFIX}${PATH}])
+
+for cmd in JQ_CMD OPEN_CMD PIP_CMD PYTHON_CMD SYSTEMCTL_CMD; do
     if eval test .\"\$$cmd\" = .''; then
         AC_MSG_FAILURE([$cmd: Undefined variable])
     elif eval test ! -x \"\$$cmd\"; then
@@ -85,21 +90,11 @@ for cmd in OPEN_CMD PIP_CMD SYSTEMCTL_CMD; do
     fi
 done
 
-if test ! -x "$PYTHON_CMD"; then
-   AC_MSG_FAILURE([Python not found])
-fi
-
 if ! [python_version_major=$($PYTHON_CMD -c 'import sys; print(sys.version_info[0])')]; then
     AC_MSG_FAILURE([Python: cannot get version info])
 elif test ."$python_version_major" = .'' -o $python_version_major -ne 3; then
     AC_MSG_FAILURE([Python v3 is not default Python])
-elif ! PYTHON_SITE_PACKAGES=$($PYTHON_CMD -c 'import sysconfig; print(sysconfig.get_path("purelib"))'); then
-    AC_MSG_FAILURE([Python: cannot get site_packages path])
 fi
-AC_SUBST([PYTHON_SITE_PACKAGES], ["$PYTHON_SITE_PACKAGES"])
-
-HOME_BIN=${HOME}/bin
-AC_SUBST([HOME_BIN], ["$HOME_BIN"])
 
 AC_CONFIG_FILES([
     Makefile

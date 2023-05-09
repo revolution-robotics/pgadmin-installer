@@ -13,7 +13,7 @@
 : ${SYSTEMCTL_CMD:='@SYSTEMCTL_CMD@'}
 : ${TAIL_CMD:='@TAIL_CMD@'}
 
-: ${PYTHON_SITE_PACKAGES:='@PYTHON_SITE_PACKAGES@'}
+: ${PGADMIN_PACKAGE_DIR:='@PGADMIN_PACKAGE_DIR@'}
 
 resolve-existing ()
 {
@@ -29,10 +29,11 @@ get-server-ip ()
     local -a config_list=()
 
     for suffix in '' _distro _local; do
-        if test -f "${PYTHON_SITE_PACKAGES}/pgadmin4/config${suffix}.py"; then
-            config_list+=( "${PYTHON_SITE_PACKAGES}/pgadmin4/config${suffix}.py" )
+        if test -f "${PGADMIN_PACKAGE_DIR}/config${suffix}.py"; then
+            config_list+=( "${PGADMIN_PACKAGE_DIR}/config${suffix}.py" )
         fi
     done
+
     $CAT_CMD "${config_list[@]}" |
         $AWK_CMD '/^[[:space:]]*DEFAULT_SERVER[^_]/ { gsub(/['\''"]/, "", $3); print  $3 }' |
         $TAIL_CMD -1
@@ -43,8 +44,8 @@ get-server-port ()
     local -a config_list=()
 
     for suffix in '' _distro _local; do
-        if test -f "${PYTHON_SITE_PACKAGES}/pgadmin4/config${suffix}.py"; then
-            config_list+=( "${PYTHON_SITE_PACKAGES}/pgadmin4/config${suffix}.py" )
+        if test -f "${PGADMIN_PACKAGE_DIR}/config${suffix}.py"; then
+            config_list+=( "${PGADMIN_PACKAGE_DIR}/config${suffix}.py" )
         fi
     done
 
