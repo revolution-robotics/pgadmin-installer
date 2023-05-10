@@ -14,9 +14,13 @@ Files installed for **GNU/Linux** desktop and systemd support include:
 - command-line script *${HOME}/bin/pgadmin-ctl*.
 
 To start the **pgAdmin** service and open the **pgAdmin** URL (by
-default: http://localhost:5050), either run in a terminal:
-`pgadmin-ctl start` or click on the **pgAdmin** desktop icon. To check
-the status of **pgAdmin**, in a terminal, run:
+default: http://localhost:5050), either run:
+```shell
+pgadmin-ctl start
+```
+or click on the **pgAdmin** desktop icon
+![logo-32](https://github.com/revolution-robotics/pgadmin-installer/assets/418762/f8a54807-2482-403f-9708-9d137bc3db2c).
+To check the status of **pgAdmin**, run:
 
 ```shell
 pgadmin-ctl status
@@ -53,12 +57,6 @@ Within the virtual environment (command prompt is prefixed by *(pgadmin)*):
 ./configure --with-opt-path=${HOME}/.local/pgadmin/bin
 gmake install
 deactivate
-```
-
-Finally, update PATH as necessary to include ~/bin:
-
-```shell
-export PATH+=:~/bin
 ```
 
 # Upgrade **pgAdmin**
