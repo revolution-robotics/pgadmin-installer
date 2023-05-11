@@ -81,7 +81,7 @@ AC_PATH_PROGS([TAIL_CMD],     [gtail tail],              [], [${OPT_PREFIX}${PAT
 
 AC_PATH_PROG([UPDATE_DB_CMD], [update-desktop-database], [], [${OPT_PREFIX}${PATH}])
 
-for cmd in JQ_CMD OPEN_CMD PIP_CMD PYTHON_CMD SYSTEMCTL_CMD; do
+for cmd in JQ_CMD PIP_CMD PYTHON_CMD SYSTEMCTL_CMD; do
     if eval test .\"\$$cmd\" = .''; then
         AC_MSG_FAILURE([$cmd: Undefined variable])
     elif eval test ! -x \"\$$cmd\"; then

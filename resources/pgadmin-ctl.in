@@ -4,8 +4,9 @@
 #
 # @(#) pgadmin-ctl
 #
-: ${AWK_CMD:='@AWK_CMD@'}
-: ${CAT_CMD:='@CAT_CMD@'}
+# This script provides a front-end to the systemd pgadmin service.
+# When starting the service, the hosted URL is opened, if possible.
+#
 : ${GREP_CMD:='@GREP_CMD@'}
 : ${OPEN_CMD:='@OPEN_CMD@'}
 : ${READLINK_CMD:='@READLINK_CMD@'}
@@ -54,6 +55,15 @@ get-server-port ()
         $TAIL_CMD -1
 }
 
+open-url ()
+{
+    url=$1
+
+    if test -x "$OPEN_CMD"; then
+        $OPEN_CMD "$url" &>/dev/null || true
+    fi
+}
+
 service-start ()
 {
     local service=$1
@@ -62,7 +72,7 @@ service-start ()
     local startup_delay_seconds=6
 
     if $SYSTEMCTL_CMD --user is-active "$service" >/dev/null; then
-        $OPEN_CMD "$url"
+        open-url "$url"
     elif $SYSTEMCTL_CMD --user start "$service"; then
         while true; do
             $SLEEP_CMD $startup_delay_seconds
@@ -70,7 +80,7 @@ service-start ()
                 break
             fi
         done
-        $OPEN_CMD "$url"
+        open-url "$url"
     else
         echo "${script_name}: ${service}: Service unable start" >&2
         $SYSTEMCTL_CMD --user status "$service"
