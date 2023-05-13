@@ -59,14 +59,16 @@ OPT_PREFIX=${OPT_PREFIX:+"${OPT_PREFIX}${PATH_SEPARATOR}"}
 AC_PATH_PROGS([AWK_CMD],      [gawk awk],                [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([CAT_CMD],      [gcat cat],                [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([CHMOD_CMD],    [gchmod chmod],            [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([GETOPT_CMD],   [ggetopt getopt],          [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([GREP_CMD],     [ggrep grep],              [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([INSTALL_CMD],  [ginstall install],        [], [${OPT_PREFIX}${PATH}])
 
 AC_PATH_PROG([JQ_CMD],        [jq],                      [], [${OPT_PREFIX}${PATH}])
 
 AC_PATH_PROGS([KILL_CMD],     [gkill kill],              [], [${OPT_PREFIX}${PATH}])
-AC_PATH_PROGS([OPEN_CMD],     [xdg-open open],           [], [${OPT_PREFIX}${ASDF_PREFIX}${PATH}])
+AC_PATH_PROGS([OPEN_CMD],     [xdg-open open],           [], [${OPT_PREFIX}${PATH}])
 
+AC_PATH_PROG([PING_CMD],      [ping],                    [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROG([PIP_CMD],       [pip3],                    [], [${OPT_PREFIX}${ASDF_PREFIX}${PATH}])
 AC_PATH_PROG([PYTHON_CMD],    [python3],                 [], [${OPT_PREFIX}${ASDF_PREFIX}${PATH}])
 
@@ -78,10 +80,11 @@ AC_PATH_PROGS([STAT_CMD],     [gstat stat],              [], [${OPT_PREFIX}${PAT
 AC_PATH_PROG([SYSTEMCTL_CMD], [systemctl])
 
 AC_PATH_PROGS([TAIL_CMD],     [gtail tail],              [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([TR_CMD],       [gtr tr],                  [], [${OPT_PREFIX}${PATH}])
 
-AC_PATH_PROG([UPDATE_DB_CMD], [update-desktop-database], [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROG([UPDATE_DB_CMD], [update-desktop-database])
 
-for cmd in JQ_CMD PIP_CMD PYTHON_CMD SYSTEMCTL_CMD; do
+for cmd in JQ_CMD PIP_CMD PING_CMD PYTHON_CMD SYSTEMCTL_CMD; do
     if eval test .\"\$$cmd\" = .''; then
         AC_MSG_FAILURE([$cmd: Undefined variable])
     elif eval test ! -x \"\$$cmd\"; then

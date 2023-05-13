@@ -7,14 +7,34 @@
 # This script provides a front-end to the systemd pgadmin service.
 # When starting the service, the hosted URL is opened, if possible.
 #
+: ${AWK_CMD:='@AWK_CMD@'}
+: ${CAT_CMD:='@CAT_CMD@'}
+: ${GETOPT_CMD:='@GETOPT_CMD@'}
 : ${GREP_CMD:='@GREP_CMD@'}
 : ${OPEN_CMD:='@OPEN_CMD@'}
+: ${PING_CMD:='@PING_CMD@'}
 : ${READLINK_CMD:='@READLINK_CMD@'}
+: ${SED_CMD:='@SED_CMD@'}
 : ${SLEEP_CMD:='@SLEEP_CMD@'}
 : ${SYSTEMCTL_CMD:='@SYSTEMCTL_CMD@'}
 : ${TAIL_CMD:='@TAIL_CMD@'}
+: ${TR_CMD:='@TR_CMD@'}
 
 : ${PGADMIN_PACKAGE_DIR:='@PGADMIN_PACKAGE_DIR@'}
+
+usage ()
+{
+    local -n args=$1
+
+    $CAT_CMD >&2 <<EOF
+Usage: ${script_name} [OPTION...] status|start|stop|restart
+Options:
+  -h, --help            Print this help, then exit.
+  -s, --server=ADDRESS  Set ADDRESS for pgAdmin to listen on (default: ${args[server]:-'127.0.0.1'}).
+  -p, --port=PORT       Set PORT for pgAdmin to listen on (default: ${args[port]:-'5050'}).
+  -t, --tls[=PROTOCOL]  Set PROTOCOL that pgAdmin uses (default: ${args[protocol]:-'http'}).
+EOF
+}
 
 resolve-existing ()
 {
@@ -25,7 +45,7 @@ resolve-existing ()
     fi
 }
 
-get-server-ip ()
+get-protocol ()
 {
     local -a config_list=()
 
@@ -36,7 +56,22 @@ get-server-ip ()
     done
 
     $CAT_CMD "${config_list[@]}" |
-        $AWK_CMD '/^[[:space:]]*DEFAULT_SERVER[^_]/ { gsub(/['\''"]/, "", $3); print  $3 }' |
+        $AWK_CMD '/^[[:space:]]*DEFAULT_PROTOCOL/ { print  $3 }' |
+        $TAIL_CMD -1
+}
+
+get-server ()
+{
+    local -a config_list=()
+
+    for suffix in '' _distro _local; do
+        if test -f "${PGADMIN_PACKAGE_DIR}/config${suffix}.py"; then
+            config_list+=( "${PGADMIN_PACKAGE_DIR}/config${suffix}.py" )
+        fi
+    done
+
+    $CAT_CMD "${config_list[@]}" |
+        $AWK_CMD '/^[[:space:]]*DEFAULT_SERVER\>/ { print  $3 }' |
         $TAIL_CMD -1
 }
 
@@ -51,8 +86,50 @@ get-server-port ()
     done
 
     $CAT_CMD "${config_list[@]}" |
-        $AWK_CMD '/^[[:space:]]*DEFAULT_SERVER_PORT/ { gsub(/['\''"]/, "", $3); print  $3 }' |
+        $AWK_CMD '/^[[:space:]]*DEFAULT_SERVER_PORT/ { print  $3 }' |
         $TAIL_CMD -1
+}
+
+set-protocol ()
+{
+    local protocol=$1
+
+    local config="${PGADMIN_PACKAGE_DIR}/config_local.py"
+
+    if $GREP_CMD -q '^[[:space:]]*DEFAULT_PROTOCOL' "$config"; then
+        $SED_CMD -Ei -e "/^[[:space:]]*DEFAULT_PROTOCOL/s/(.*=).*/\\1 '$protocol'/" \
+                 "$config" || return $?
+    else
+        echo "DEFAULT_PROTOCOL = '$protocol'" >>"$config" || return $?
+    fi
+}
+
+set-server ()
+{
+    local server=$1
+
+    local config="${PGADMIN_PACKAGE_DIR}/config_local.py"
+
+    if $GREP_CMD -q '^[[:space:]]*DEFAULT_SERVER\>' "$config"; then
+        $SED_CMD -Ei -e "/^[[:space:]]*DEFAULT_SERVER\\>/s/(.*=).*/\\1 '$server'/" \
+                 "$config" || return $?
+    else
+        echo "DEFAULT_SERVER = '$server'" >>"$config" || return $?
+    fi
+}
+
+set-server-port ()
+{
+    local port=$1
+
+    local config="${PGADMIN_PACKAGE_DIR}/config_local.py"
+
+    if $GREP_CMD -q '^[[:space:]]*DEFAULT_SERVER_PORT' "$config"; then
+        $SED_CMD -Ei -e "/^[[:space:]]*DEFAULT_SERVER_PORT/s/(.*=).*/\\1 $port/" \
+                 "$config" || return $?
+    else
+        echo "DEFAULT_SERVER_PORT = $port" >>"$config" || return $?
+    fi
 }
 
 open-url ()
@@ -104,6 +181,92 @@ service-status ()
     $SYSTEMCTL_CMD --user status "$service"
 }
 
+is-port-number ()
+{
+    local port=$1
+
+    if [[ ! ."$port" =~ ^\.[0-9]+$ ]]; then
+        echo "${script_name}: $port: argument not numeric" >&2
+        return 1
+    elif (( port < 1 || 65535 < port )); then
+        echo "${script_name}: $port: argument out of range [1-65535]" >&2
+        return 2
+    fi
+}
+
+is-address-reachable ()
+{
+    local address=$1
+
+    if ! $PING_CMD -nqrc 2 >/dev/null "$address"; then
+        echo "${script_name}: $address: address unreachable by ICMP protocol" >&2
+        return 1
+    fi
+}
+
+is-protocol ()
+{
+    local protocol=${1:-'https'}
+
+    if test ."$protocol" != .'http' -a ."$protocol" != .'https'; then
+        echo "${script_name}: $protocol: unsupported protocol" >&2
+        return 1
+    fi
+}
+
+parse-command-line ()
+{
+    local -n params=$1
+
+    shift
+
+    ## parse input arguments ##
+    local -r short_opts=p:hs:t::
+    local -r long_opts=port:,help,server:,tls::
+    local options=''
+
+    options=$(
+        $GETOPT_CMD -s bash --options "$short_opts"  \
+                    --longoptions "$long_opts" --name "$script_name" -- "$@"
+        ) || exit $?
+
+    eval set -- "$options"
+
+    while true; do
+        case "$1" in
+            -p|--port)
+                shift
+                is-port-number "$1" || return $?
+                params[port]=$1
+                ;;
+            -h|--help)
+                usage params
+                exit 0
+                ;;
+            -s|--server)
+                shift
+                is-address-reachable "$1" || return $?
+                params[server]=$1
+                ;;
+            -t|--tls)
+                shift
+                is-protocol "$1" || return $?
+                params[protocol]=${1:-'https'}
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *) # Process non-option arguments below...
+                break
+                ;;
+        esac
+        shift
+    done
+
+    params[cmd]=$1
+}
+
 if test ."$0" = ."${BASH_SOURCE[0]}"; then
     set -o pipefail
 
@@ -111,16 +274,28 @@ if test ."$0" = ."${BASH_SOURCE[0]}"; then
     declare script_name=${script##*/}
 
     declare service=pgadmin.service
-    declare server_ip=''
-    declare server_port=''
+    declare default_server=''
+    declare default_server_port=''
 
+    default_protocol=$(get-protocol | $TR_CMD -d \'\") || exit $?
+    default_server=$(get-server | $TR_CMD -d \'\") || exit $?
+    default_server_port=$(get-server-port) || exit $?
 
-    server_ip=$(get-server-ip) || exit $?
-    server_port=$(get-server-port) || exit $?
+    declare -A parameters=(
+        [protocol]=${default_protocol:-'http'}
+        [server]=${default_server:-'127.0.0.1'}
+        [port]=${default_server_port:-'5050'}
+    )
 
-    declare url=http://${server_ip}:${server_port}
+    parse-command-line parameters "$@"
 
-    case "$1" in
+    set-protocol "${parameters[protocol]}"
+    set-server "${parameters[server]}"
+    set-server-port "${parameters[port]}"
+
+    declare url=${parameters[protocol]}://${parameters[server]}:${parameters[port]}
+
+    case "${parameters[cmd]}" in
         status)
             service-status "$service" || exit $?
             ;;
@@ -130,8 +305,12 @@ if test ."$0" = ."${BASH_SOURCE[0]}"; then
         start)
             service-start "$service" "$url" || exit $?
             ;;
+        restart)
+            service-stop "$service" || exit $?
+            service-start "$service" "$url" || exit $?
+            ;;
         *)
-            echo "Usage: ${script_name} status|start|stop" >&2
+            usage parameters
             ;;
     esac
 fi
