@@ -24,4 +24,4 @@ reinitialize: $(bin_SCRIPTS)
 	$(BUILD_DIR)/pgadmin-installer reinitialize
 
 clean-local:
-	$(RM_CMD) -rf $(bin_SCRIPTS)
+	rm -rf $(bin_SCRIPTS)

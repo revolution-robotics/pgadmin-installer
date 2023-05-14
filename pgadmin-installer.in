@@ -36,6 +36,7 @@
 : ${KILL_CMD:='@KILL_CMD@'}
 : ${PIP_CMD:='@PIP_CMD@'}
 : ${READLINK_CMD:='@READLINK_CMD@'}
+: ${RM_CMD:='@RM_CMD@'}
 : ${SED_CMD:='@SED_CMD@'}
 : ${STAT_CMD:='@STAT_CMD@'}
 : ${SLEEP_CMD:='@SLEEP_CMD@'}

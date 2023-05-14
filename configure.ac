@@ -73,6 +73,7 @@ AC_PATH_PROG([PIP_CMD],       [pip3],                    [], [${OPT_PREFIX}${ASD
 AC_PATH_PROG([PYTHON_CMD],    [python3],                 [], [${OPT_PREFIX}${ASDF_PREFIX}${PATH}])
 
 AC_PATH_PROGS([READLINK_CMD], [greadlink readlink],      [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([RM_CMD],       [grm rm],                  [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([SED_CMD],      [gsed sed],                [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([SLEEP_CMD],    [gsleep sleep],            [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([STAT_CMD],     [gstat stat],              [], [${OPT_PREFIX}${PATH}])

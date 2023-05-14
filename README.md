@@ -13,23 +13,19 @@ Files installed for **GNU/Linux** desktop and systemd support include:
 - [**XDG**](https://www.freedesktop.org/wiki) desktop entry *${HOME}/.local/share/applications/pgadmin.desktop*, and
 - command-line script *${HOME}/bin/pgadmin-ctl*.
 
-To start the **pgAdmin** service and open the **pgAdmin** URL (by
-default: http://localhost:5050), either run:
-```shell
-pgadmin-ctl start
-```
-or click on the **pgAdmin** desktop icon
-![logo-32](https://github.com/revolution-robotics/pgadmin-installer/assets/418762/f8a54807-2482-403f-9708-9d137bc3db2c).
-To check the status of **pgAdmin**, run:
+Click on the **pgAdmin** desktop icon
+![logo-32](https://github.com/revolution-robotics/pgadmin-server/assets/418762/f8a54807-2482-403f-9708-9d137bc3db2c)
+to start the **pgAdmin** service and open the **pgAdmin** URL (by
+default: http://localhost:5050).  Additional options are available on
+the command line:
 
-```shell
-pgadmin-ctl status
-```
-
-To stop **pgAdmin**, use:
-
-```
-pgadmin-ctl stop
+```man
+Usage: pgadmin-ctl [OPTION...] status|start|stop|restart
+Options:
+  -h, --help            Print this help, then exit.
+  -s, --server=ADDRESS  Set ADDRESS for pgAdmin to listen on (default: 127.0.0.1).
+  -p, --port=PORT       Set PORT for pgAdmin to listen on (default: 5050).
+  -t, --tls[=PROTOCOL]  Set PROTOCOL that pgAdmin accepts (default: http).
 ```
 
 # Prerequisites
