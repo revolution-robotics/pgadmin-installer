@@ -60,6 +60,7 @@ AC_PATH_PROGS([AWK_CMD],      [gawk awk],                [], [${OPT_PREFIX}${PAT
 AC_PATH_PROGS([CAT_CMD],      [gcat cat],                [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([CHMOD_CMD],    [gchmod chmod],            [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([GETOPT_CMD],   [ggetopt getopt],          [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([FLOCK_CMD],    [flock],                   [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([GREP_CMD],     [ggrep grep],              [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([INSTALL_CMD],  [ginstall install],        [], [${OPT_PREFIX}${PATH}])
 

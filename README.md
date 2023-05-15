@@ -1,4 +1,4 @@
-# pgAdmin Installer GNU/Linux Desktop environments
+# pgAdmin for GNU/Linux desktops and servers
 
 This script installs a local Flask-based **pgAdmin** server together
 with **GNU/Linux** desktop suport and a systemd service. During
@@ -40,8 +40,8 @@ Options:
 To install **pgadmin** in virtual environment, run:
 
 ```shell
-git clone https://github.com/revolution-robotics.com/pgadmin-installer
-cd ./pgadmin-installer
+git clone https://github.com/revolution-robotics.com/pgadmin-server
+cd ./pgadmin-server
 python -m venv ~/.local/pgadmin
 source ~/.local/pgadmin/bin/activate
 ```
@@ -69,7 +69,7 @@ After installation, to remove the **pgAdmin** service and associated
 files other than *~/.pgadmin* and the virtual environemnt, run:
 
 ```shell
-make -C /path/to/pgadmin-installer uninstall
+make -C /path/to/pgadmin-server uninstall
 ```
 
 To remove the virtual environment, use:
