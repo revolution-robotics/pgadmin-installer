@@ -237,7 +237,8 @@ settle-pg-database ()
 
     printf '\nUpdating pgAdmin4 database, please wait...'
 
-    pgadmin4 &>"${script_dir}/pgadmin-first-run.log" &
+    # pgadmin4 writes to tty.  TODO: log to file.
+    pgadmin4 &>/dev/null &
     pid=$!
 
     trap '$KILL_CMD -9 "$pid"; $RM_CMD -rf "$pg_data_dir"; exit 1' 0 1 2 15 RETURN
