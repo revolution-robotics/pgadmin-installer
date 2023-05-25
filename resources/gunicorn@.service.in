@@ -1,0 +1,21 @@
+[Unit]
+Description=Gunicorn WSGI Server for Web App %i.
+Documentation=https://docs.gunicorn.org/en/stable
+After=network.target
+
+[Service]
+Type=exec
+
+# The path to your application code root directory.
+WorkingDirectory=@PYTHON_SITE_PACKAGES_DIR@/%i
+
+ExecStart=/bin/bash -l -c "gunicorn \
+         --bind 127.0.0.1:5050 \
+         --workers=1 \
+         --threads=25 \
+         --access-logfile=$${HOME}/.pgadmin/gunicorn-access.log \
+         --error-logfile=$${HOME}/.pgadmin/gunicorn-error.log \
+         %i:app"
+
+[Install]
+WantedBy=default.target

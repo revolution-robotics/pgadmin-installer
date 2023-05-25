@@ -8,7 +8,7 @@ bin_SCRIPTS = \
 	pgadmin-installer \
 	resources/pgadmin-ctl \
 	resources/pgadmin.desktop \
-	resources/pgadmin.service
+	resources/gunicorn@.service
 
 AM_DEFAULT_SOURCE_EXT = .in
 

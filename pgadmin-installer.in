@@ -6,9 +6,9 @@
 #
 # This script installs a local pgAdmin4 server together with GNU/Linux
 # desktop suport in two stages: bootstrap and install. The bootstrap
-# stage identifies where Python installs packages. During install
-# stage, the user is prompted for credentials to encrypt saved
-# passwords and the pgAdmin4 (SQLite) database is updated accordingly.
+# stage identifies where Python installs packages. The install stage
+# prompts the user for credentials to encrypt saved passwords, then
+# the pgAdmin4 (SQLite) database is updated accordingly.
 #
 # The files installed for GNU/Linux desktop support include:
 #
@@ -34,6 +34,7 @@
 : ${INSTALL_CMD:='@INSTALL_CMD@'}
 : ${JQ_CMD:='@JQ_CMD@'}
 : ${KILL_CMD:='@KILL_CMD@'}
+: ${LN_CMD:='@LN_CMD@'}
 : ${PIP_CMD:='@PIP_CMD@'}
 : ${READLINK_CMD:='@READLINK_CMD@'}
 : ${RM_CMD:='@RM_CMD@'}
@@ -102,8 +103,6 @@ deploy-packages ()
 {
     local -n pkgs=$1
 
-    local pgadmin_path=''
-
     $PIP_CMD install --upgrade --no-input "${pkgs[@]}"
     maybe-reshim-python ${PIP_CMD%/*}
 }
@@ -127,7 +126,7 @@ get-pgadmin-path ()
            # Upgrade pip and pyopenssl (see: https://stackoverflow.com/a/74443414).
            $PIP_CMD install -U pip >&2
            ${HOME}/.local/bin/pip install -U pip >&2
-           ${HOME}/.local/bin/pip install -U pyopenssl email-validator >&2
+           ${HOME}/.local/bin/pip install -U pyopenssl >&2
         else
             echo "${script_name}: pgadmin4: No such file or directory" >&2
             return 1
@@ -160,12 +159,15 @@ deploy-resources ()
 
     pgadmin_path=$(get-pgadmin-path) || return $?
     pgadmin_package_dir=$(get-pgadmin-package-dir) || return $?
+    $LN_CMD -sf pgAdmin4.py "${pgadmin_package_dir}/pgadmin4.py"
+    $LN_CMD -sf pgAdmin4.wsgi "${pgadmin_package_dir}/pgadmin4.wsgi"
 
     printf "%s\n" "${resources[@]}" |
         while read file directory; do
             directory=${directory/@PGADMIN_PACKAGE_DIR@/$pgadmin_package_dir}
             $INSTALL_CMD -d -m 0700 "$directory"
             $SED_CMD -e "s;@PGADMIN4_CMD@;${pgadmin_path};" \
+                     -e "s;@PYTHON_SITE_PACKAGES_DIR@;${pgadmin_package_dir%/*};" \
                      -e "s;@PGADMIN_PACKAGE_DIR@;${pgadmin_package_dir};" \
                      -e "s;@HOME_BIN@;${HOME}/bin;" \
                      "$file" >"${directory}/${file##*/}" \
@@ -364,12 +366,12 @@ if test ."$0" = ."${BASH_SOURCE[0]}"; then
     declare -a pgadmin_resources=(
         "${resources_dir}/config_local.py @PGADMIN_PACKAGE_DIR@"
         "${resources_dir}/pgadmin.desktop ${HOME}/.local/share/applications"
-        "${resources_dir}/pgadmin.service ${HOME}/.config/systemd/user"
+        "${resources_dir}/gunicorn@.service ${HOME}/.config/systemd/user"
         "${resources_dir}/pgadmin-ctl ${HOME}/bin"
     )
 
-    declare service=pgadmin.service
-    declare -a wheels=( pgadmin4 simple-websocket email-validator )
+    declare service=gunicorn@pgadmin4.service
+    declare -a wheels=( pgadmin4 simple-websocket gunicorn email-validator )
     declare pgadmin_package_dir=''
 
     case "$1" in

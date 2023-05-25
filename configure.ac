@@ -67,6 +67,7 @@ AC_PATH_PROGS([INSTALL_CMD],  [ginstall install],        [], [${OPT_PREFIX}${PAT
 AC_PATH_PROG([JQ_CMD],        [jq],                      [], [${OPT_PREFIX}${PATH}])
 
 AC_PATH_PROGS([KILL_CMD],     [gkill kill],              [], [${OPT_PREFIX}${PATH}])
+AC_PATH_PROGS([LN_CMD],       [gln ln],                  [], [${OPT_PREFIX}${PATH}])
 AC_PATH_PROGS([OPEN_CMD],     [xdg-open open],           [], [${OPT_PREFIX}${PATH}])
 
 AC_PATH_PROG([PING_CMD],      [ping],                    [], [${OPT_PREFIX}${PATH}])
@@ -104,7 +105,7 @@ fi
 AC_CONFIG_FILES([
     Makefile
     resources/pgadmin.desktop
-    resources/pgadmin.service
+    resources/gunicorn@.service
 ])
 
 AC_CONFIG_FILES([pgadmin-installer], [chmod +x pgadmin-installer])

@@ -29,12 +29,11 @@ usage ()
     local -n args=$1
 
     $CAT_CMD >&2 <<EOF
-Usage: ${script_name} [OPTION...] status|start|stop|restart
+Usage: ${script_name} [OPTION...] enable|disable|start|stop|status|restart
 Options:
   -h, --help            Print this help, then exit.
   -s, --server=ADDRESS  Set ADDRESS for pgAdmin to listen on (default: ${args[server]:-'127.0.0.1'}).
   -p, --port=PORT       Set PORT for pgAdmin to listen on (default: ${args[port]:-'5050'}).
-  -t, --tls[=PROTOCOL]  Set PROTOCOL that pgAdmin accepts (default: ${args[protocol]:-'http'}).
 EOF
 }
 
@@ -45,21 +44,6 @@ resolve-existing ()
     else
         $READLINK_CMD -f N "$@"
     fi
-}
-
-get-protocol ()
-{
-    local -a config_list=()
-
-    for suffix in '' _distro _local; do
-        if test -f "${PGADMIN_PACKAGE_DIR}/config${suffix}.py"; then
-            config_list+=( "${PGADMIN_PACKAGE_DIR}/config${suffix}.py" )
-        fi
-    done
-
-    $CAT_CMD "${config_list[@]}" |
-        $AWK_CMD '/^\s*DEFAULT_PROTOCOL/ { print  $3 }' |
-        $TAIL_CMD -1
 }
 
 get-server ()
@@ -92,46 +76,29 @@ get-port ()
         $TAIL_CMD -1
 }
 
-set-protocol ()
+bind-address ()
 {
-    local protocol=$1
+    local -n params=$1
 
     local config="${PGADMIN_PACKAGE_DIR}/config_local.py"
-
-    if $GREP_CMD -q '^\s*DEFAULT_PROTOCOL' "$config"; then
-        $SED_CMD -Ei -e "/^\\s*DEFAULT_PROTOCOL/s/(.*=).*/\\1 '$protocol'/" \
-                 "$config" || return $?
-    else
-        echo "DEFAULT_PROTOCOL = '$protocol'" >>"$config" || return $?
-    fi
-}
-
-set-server ()
-{
-    local server=$1
-
-    local config="${PGADMIN_PACKAGE_DIR}/config_local.py"
+    local service_unit="${HOME}/.config/systemd/user/gunicorn@.service"
 
     if $GREP_CMD -q '^\s*DEFAULT_SERVER\>' "$config"; then
-        $SED_CMD -Ei -e "/^\\s*DEFAULT_SERVER\\>/s/(.*=).*/\\1 '$server'/" \
+        $SED_CMD -Ei -e "/^\\s*DEFAULT_SERVER\\>/s/(.*=).*/\\1 '${params[server]}'/" \
                  "$config" || return $?
     else
-        echo "DEFAULT_SERVER = '$server'" >>"$config" || return $?
+        echo "DEFAULT_SERVER = '${params[server]}'" >>"$config" || return $?
     fi
-}
-
-set-port ()
-{
-    local port=$1
-
-    local config="${PGADMIN_PACKAGE_DIR}/config_local.py"
 
     if $GREP_CMD -q '^\s*DEFAULT_SERVER_PORT' "$config"; then
-        $SED_CMD -Ei -e "/^\\s*DEFAULT_SERVER_PORT/s/(.*=).*/\\1 $port/" \
+        $SED_CMD -Ei -e "/^\\s*DEFAULT_SERVER_PORT/s/(.*=).*/\\1 ${params[port]}/" \
                  "$config" || return $?
     else
-        echo "DEFAULT_SERVER_PORT = $port" >>"$config" || return $?
+        echo "DEFAULT_SERVER_PORT = ${params[port]}" >>"$config" || return $?
     fi
+
+    $SED_CMD -Ei -e "/--bind/s/(.*--bind).*/\1 ${params[server]}:${params[port]}/" "$service_unit"
+    $SYSTEMCTL_CMD --user daemon-reload
 }
 
 open-url ()
@@ -140,6 +107,24 @@ open-url ()
 
     if test -x "$OPEN_CMD"; then
         $OPEN_CMD "$url" &>/dev/null || true
+    fi
+}
+
+service-disable ()
+{
+    local service=$1
+
+    if $SYSTEMCTL_CMD --user is-enabled "$service" >/dev/null; then
+        $SYSTEMCTL_CMD --user disable "$service"
+    fi
+}
+
+service-enable ()
+{
+    local service=$1
+
+    if ! $SYSTEMCTL_CMD --user is-enabled "$service" >/dev/null; then
+        $SYSTEMCTL_CMD --user enable "$service"
     fi
 }
 
@@ -206,16 +191,6 @@ is-address-reachable ()
     fi
 }
 
-is-protocol ()
-{
-    local protocol=${1:-'https'}
-
-    if test ."$protocol" != .'http' -a ."$protocol" != .'https'; then
-        echo "${script_name}: $protocol: unsupported protocol" >&2
-        return 1
-    fi
-}
-
 parse-command-line ()
 {
     local -n params=$1
@@ -223,8 +198,8 @@ parse-command-line ()
     shift
 
     ## parse input arguments ##
-    local -r short_opts=p:hs:t::
-    local -r long_opts=port:,help,server:,tls::
+    local -r short_opts=p:hs:
+    local -r long_opts=port:,help,server:
     local options=''
 
     options=$(
@@ -236,26 +211,21 @@ parse-command-line ()
 
     while true; do
         case "$1" in
-            -p|--port)
+            '-p'|'--port')
                 shift
                 is-port-number "$1" || return $?
                 params[port]=$1
                 ;;
-            -h|--help)
+            '-h'|'--help')
                 usage params
                 exit 0
                 ;;
-            -s|--server)
+            '-s'|'--server')
                 shift
                 is-address-reachable "$1" || return $?
                 params[server]=$1
                 ;;
-            -t|--tls)
-                shift
-                is-protocol "$1" || return $?
-                params[protocol]=${1:-'https'}
-                ;;
-            --)
+            '--')
                 shift
                 break
                 ;;
@@ -282,48 +252,46 @@ if test ."$0" = ."${BASH_SOURCE[0]}"; then
         exec env LOCKED="$script_name" $FLOCK_CMD -en "$0" "$0" "$@" || true
     fi
 
-    declare service=pgadmin.service
+    declare service=gunicorn@pgadmin4.service
     declare default_server=''
     declare default_server_port=''
 
-    default_protocol=$(get-protocol | $TR_CMD -d \'\") || exit $?
     default_server=$(get-server | $TR_CMD -d \'\") || exit $?
     default_port=$(get-port) || exit $?
 
     declare -A parameters=(
-        [protocol]=${default_protocol:-'http'}
+        [protocol]=http
         [server]=${default_server:-'127.0.0.1'}
         [port]=${default_server_port:-'5050'}
     )
 
     parse-command-line parameters "$@"
 
-    if test ."$default_protocol" != "${parameters[protocol]}"; then
-        set-protocol "${parameters[protocol]}"
-    fi
-
-    if test ."$default_server" != "${parameters[server]}"; then
-        set-server "${parameters[server]}"
-    fi
-
-    if test ."$default_port" != "${parameters[port]}"; then
-        set-port "${parameters[port]}"
+    if test ."$default_server" != ."${parameters[server]}" \
+            -o ."$default_port" != ."${parameters[port]}"; then
+        bind-address parameters
     fi
 
     declare url=${parameters[protocol]}://${parameters[server]}:${parameters[port]}
 
     case "${parameters[cmd]}" in
-        status)
-            service-status "$service" || exit $?
+        'enable')
+            service-enable "$service" || exit $?
             ;;
-        stop)
-            service-stop "$service" || exit $?
+        'disable')
+            service-disable "$service" || exit $?
             ;;
-        start)
+        'start')
             service-start "$service" "$url" || exit $?
             $SLEEP_CMD 2
             ;;
-        restart)
+        'stop')
+            service-stop "$service" || exit $?
+            ;;
+        'status')
+            service-status "$service" || exit $?
+            ;;
+        'restart')
             service-stop "$service" || exit $?
             service-start "$service" "$url" || exit $?
             $SLEEP_CMD 2
