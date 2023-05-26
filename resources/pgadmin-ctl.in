@@ -19,9 +19,9 @@
 : ${SLEEP_CMD:='@SLEEP_CMD@'}
 : ${SYSTEMCTL_CMD:='@SYSTEMCTL_CMD@'}
 : ${TAIL_CMD:='@TAIL_CMD@'}
-: ${TR_CMD:='@TR_CMD@'}
 
 : ${PGADMIN_PACKAGE_DIR:='@PGADMIN_PACKAGE_DIR@'}
+: ${SERVER_MODE:=False}
 : ${LOCKED:=''}
 
 usage ()
@@ -46,58 +46,47 @@ resolve-existing ()
     fi
 }
 
-get-server ()
+get-config-value ()
 {
-    local -a config_list=()
+    local variable=$1
 
-    for suffix in '' _distro _local; do
-        if test -f "${PGADMIN_PACKAGE_DIR}/config${suffix}.py"; then
-            config_list+=( "${PGADMIN_PACKAGE_DIR}/config${suffix}.py" )
-        fi
-    done
+    local print_conditional_value="
+import sys
+import builtins
 
-    $CAT_CMD "${config_list[@]}" |
-        $AWK_CMD '/^\s*DEFAULT_SERVER\>/ { print  $3 }' |
-        $TAIL_CMD -1
-}
+builtins.SERVER_MODE = True if sys.argv[1] == 'True' else False
+sys.path.append('$PGADMIN_PACKAGE_DIR')
 
-get-port ()
-{
-    local -a config_list=()
+import config
 
-    for suffix in '' _distro _local; do
-        if test -f "${PGADMIN_PACKAGE_DIR}/config${suffix}.py"; then
-            config_list+=( "${PGADMIN_PACKAGE_DIR}/config${suffix}.py" )
-        fi
-    done
-
-    $CAT_CMD "${config_list[@]}" |
-        $AWK_CMD '/^\s*DEFAULT_SERVER_PORT/ { print  $3 }' |
-        $TAIL_CMD -1
+print(getattr(config, sys.argv[2]))
+"
+    python -c "$print_conditional_value" "$SERVER_MODE" "$variable"
 }
 
 bind-address ()
 {
     local -n params=$1
 
-    local config="${PGADMIN_PACKAGE_DIR}/config_local.py"
+    local config_local="${PGADMIN_PACKAGE_DIR}/config_local.py"
     local service_unit="${HOME}/.config/systemd/user/gunicorn@.service"
 
-    if $GREP_CMD -q '^\s*DEFAULT_SERVER\>' "$config"; then
+    if $GREP_CMD -q '^\s*DEFAULT_SERVER\>' "$config_local"; then
         $SED_CMD -Ei -e "/^\\s*DEFAULT_SERVER\\>/s/(.*=).*/\\1 '${params[server]}'/" \
-                 "$config" || return $?
+                 "$config_local" || return $?
     else
-        echo "DEFAULT_SERVER = '${params[server]}'" >>"$config" || return $?
+        echo "DEFAULT_SERVER = '${params[server]}'" >>"$config_local" || return $?
     fi
 
-    if $GREP_CMD -q '^\s*DEFAULT_SERVER_PORT' "$config"; then
+    if $GREP_CMD -q '^\s*DEFAULT_SERVER_PORT' "$config_local"; then
         $SED_CMD -Ei -e "/^\\s*DEFAULT_SERVER_PORT/s/(.*=).*/\\1 ${params[port]}/" \
-                 "$config" || return $?
+                 "$config_local" || return $?
     else
-        echo "DEFAULT_SERVER_PORT = ${params[port]}" >>"$config" || return $?
+        echo "DEFAULT_SERVER_PORT = ${params[port]}" >>"$config_local" || return $?
     fi
 
-    $SED_CMD -Ei -e "/--bind/s/(.*--bind).*/\1 ${params[server]}:${params[port]}/" "$service_unit"
+    $SED_CMD -Ei -e "/--bind/s/(.*--bind).*/\\1 ${params[server]}:${params[port]} \\\/" \
+             "$service_unit" || return $?
     $SYSTEMCTL_CMD --user daemon-reload
 }
 
@@ -198,8 +187,8 @@ parse-command-line ()
     shift
 
     ## parse input arguments ##
-    local -r short_opts=p:hs:
-    local -r long_opts=port:,help,server:
+    local -r short_opts=p:hs:v
+    local -r long_opts=port:,help,server:,verbose
     local options=''
 
     options=$(
@@ -225,6 +214,9 @@ parse-command-line ()
                 is-address-reachable "$1" || return $?
                 params[server]=$1
                 ;;
+            '-v'|'--verbose')
+                params[verbose]=true
+                ;;
             '--')
                 shift
                 break
@@ -242,13 +234,13 @@ parse-command-line ()
 if test ."$0" = ."${BASH_SOURCE[0]}"; then
     set -o pipefail
 
-    declare script=$(resolve-existing "$0")
+    declare script=$(resolve-existing "$0") || exit $?
     declare script_name=${script##*/}
 
     if command -v "$FLOCK_CMD" >/dev/null \
             && test ."$script_name" != ."$LOCKED"; then
 
-        #  Avoid running multiple instances of this script.
+        # Avoid running multiple instances of this script.
         exec env LOCKED="$script_name" $FLOCK_CMD -en "$0" "$0" "$@" || true
     fi
 
@@ -256,16 +248,21 @@ if test ."$0" = ."${BASH_SOURCE[0]}"; then
     declare default_server=''
     declare default_server_port=''
 
-    default_server=$(get-server | $TR_CMD -d \'\") || exit $?
-    default_port=$(get-port) || exit $?
+    default_server=$(get-config-value DEFAULT_SERVER) || exit $?
+    default_port=$(get-config-value DEFAULT_SERVER_PORT) || exit $?
 
     declare -A parameters=(
         [protocol]=http
         [server]=${default_server:-'127.0.0.1'}
         [port]=${default_server_port:-'5050'}
+        [verbose]=false
     )
 
     parse-command-line parameters "$@"
+
+    if ${parameters[verbose]}; then
+        set -x
+    fi
 
     if test ."$default_server" != ."${parameters[server]}" \
             -o ."$default_port" != ."${parameters[port]}"; then

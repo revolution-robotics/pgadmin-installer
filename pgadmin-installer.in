@@ -46,6 +46,7 @@
 : ${UPDATE_DB_CMD:='@UPDATE_DB_CMD@'}
 
 : ${ASDF_SHIMS_PATH:='@ASDF_SHIMS_PATH@'}
+: ${SERVER_MODE:=False}
 
 resolve-existing ()
 {
@@ -54,6 +55,25 @@ resolve-existing ()
     else
         $READLINK_CMD -f N "$@"
     fi
+}
+
+get-config-value ()
+{
+    local variable=$1
+    local pgadmin_package_dir=$2
+
+    local print_conditional_value="
+import sys
+import builtins
+
+builtins.SERVER_MODE = True if sys.argv[1] == 'True' else False
+sys.path.append('$pgadmin_package_dir')
+
+import config
+
+print(getattr(config, sys.argv[2]))
+"
+    python -c "$print_conditional_value" "$SERVER_MODE" "$variable"
 }
 
 get-file-size ()
@@ -74,29 +94,6 @@ maybe-reshim-python ()
         source "${ASDF_SHIMS_PATH}/../asdf.sh"
         asdf reshim python
     fi
-}
-
-get-data-dir ()
-{
-    local pgadmin_package_dir=$1
-
-    local -a config_list=()
-
-    for suffix in '' _distro _local; do
-        if test -f "${pgadmin_package_dir}/config${suffix}.py"; then
-            config_list+=( "${pgadmin_package_dir}/config${suffix}.py" )
-        fi
-    done
-
-    local pg_data_dir=''
-
-    pg_data_dir=$(
-        $CAT_CMD "${config_list[@]}" |
-            $AWK_CMD -F\' '/^[[:space:]]*DATA_DIR/ { print  $2 }' |
-            $TAIL_CMD -1
-               ) || return $?
-
-    eval echo "$pg_data_dir"
 }
 
 deploy-packages ()
@@ -251,7 +248,7 @@ settle-pg-database ()
 
     local -i current_size=0
     local -i previous_size=0
-    local -i update_seconds=5
+    local -i update_seconds=10
 
     current_size=$(get-file-size "$pg_database") || return $?
     while (( current_size != previous_size )); do
@@ -265,21 +262,21 @@ settle-pg-database ()
     $SLEEP_CMD "$update_seconds"
     $KILL_CMD -1 "$pid"
     printf '\n'
-    $SLEEP_CMD $(( 2 * update_seconds ))
+    $SLEEP_CMD "$update_seconds"
 }
 
 initialize-service ()
 {
     local pgadmin_package_dir=$1
 
-    local pg_data_dir=''
+    local pgadmin_data_dir=''
 
-    pg_data_dir=$(get-data-dir "$pgadmin_package_dir") || return $?
+    pgadmin_data_dir=$(get-config-value DATA_DIR "$pgadmin_package_dir") || return $?
 
-    if test ! -d "$pg_data_dir"; then
+    if test ! -d "$pgadmin_data_dir"; then
         if command -v pgadmin4 >/dev/null; then
             get-and-export-credentials || return $?
-            settle-pg-database "$pg_data_dir" || return $?
+            settle-pg-database "$pgadmin_data_dir" || return $?
         else
             cat <<EOF
 ╒════════════════════════════════════════════════════════════════════════╕
@@ -358,7 +355,7 @@ complete-installation ()
 if test ."$0" = ."${BASH_SOURCE[0]}"; then
     set -o pipefail
 
-    declare script=$(resolve-existing "$0")
+    declare script=$(resolve-existing "$0") || exit $?
     declare script_name=${script##*/}
     declare script_dir=${script%/*}
 
